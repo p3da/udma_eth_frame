@@ -1,0 +1,4 @@
+udma_external_per:
+  files: [
+    rtl/udma_eth_frame.sv,
+  ]
