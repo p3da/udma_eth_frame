@@ -13,7 +13,7 @@
 `define REG_TX_CFG       5'b00110 //BASEADDR+0x18
 
 
-module udma_uart_reg_if #(
+module udma_eth_frame_reg #(
     parameter L2_AWIDTH_NOAL = 12,
     parameter TRANS_SIZE     = 16
 ) (

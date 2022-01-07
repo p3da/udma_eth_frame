@@ -69,7 +69,13 @@ module udma_eth_frame #(
 /* signals between tx buffer fifo and dc fifo */
 logic           s_data_tx_valid;
 logic           s_data_tx_ready;
-logic    [31:0] s_data_tx;
+logic     [7:0] s_data_tx;
+logic     [7:0] s_data_rx_o;
+
+assign data_tx_datasize_o = 2'b00;
+assign data_rx_datasize_o = 2'b00;
+
+assign data_rx_o = { 24'h0, s_data_rx_o };
 
 /* register interface */
 udma_eth_frame_reg #(
@@ -109,7 +115,7 @@ udma_eth_frame_reg #(
 
 
 io_tx_fifo #(
-    .DATA_WIDTH(32),
+    .DATA_WIDTH(8),
     .BUFFER_DEPTH(128)
 ) u_fifo (
     .clk_i   ( sys_clk_i       ),
@@ -121,12 +127,12 @@ io_tx_fifo #(
     .req_o   ( data_tx_req_o   ),
     .gnt_i   ( data_tx_gnt_i   ),
     .valid_i ( data_tx_valid_i ),
-    .data_i  ( data_tx_i       ),
+    .data_i  ( data_tx_i[7:0]  ),
     .ready_o ( data_tx_ready_o )
 );
 
 udma_dc_fifo #(
-    .DATA_WIDTH(32),
+    .DATA_WIDTH(8),
     .BUFFER_DEPTH(128)
 ) u_dc_fifo_tx (
     .src_clk_i    ( sys_clk_i          ),
@@ -142,7 +148,7 @@ udma_dc_fifo #(
 );
 
 udma_dc_fifo #(
-    .DATA_WIDTH(32),
+    .DATA_WIDTH(8),
     .BUFFER_DEPTH(128)
 ) u_dc_fifo_rx (
     .src_clk_i    ( clk_eth            ),
@@ -152,7 +158,7 @@ udma_dc_fifo #(
     .src_ready_o  ( eth_rx_axis_tready ),
     .dst_clk_i    ( sys_clk_i          ),
     .dst_rstn_i   ( rstn_i             ),
-    .dst_data_o   ( data_rx_o          ),
+    .dst_data_o   ( s_data_rx_o        ),
     .dst_valid_o  ( data_rx_valid_o    ),
     .dst_ready_i  ( data_rx_ready_i    )
 );
