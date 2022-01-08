@@ -7,10 +7,13 @@
 `define REG_RX_SADDR     5'b00000 //BASEADDR+0x00
 `define REG_RX_SIZE      5'b00001 //BASEADDR+0x04
 `define REG_RX_CFG       5'b00010 //BASEADDR+0x08
+`define REG_WHOAMI       5'b00011 //holds the peripheral id
+
 
 `define REG_TX_SADDR     5'b00100 //BASEADDR+0x10
 `define REG_TX_SIZE      5'b00101 //BASEADDR+0x14
 `define REG_TX_CFG       5'b00110 //BASEADDR+0x18
+
 
 
 module udma_eth_frame_reg #(
@@ -141,6 +144,8 @@ module udma_eth_frame_reg #(
                cfg_data_o[TRANS_SIZE-1:0] <= cfg_tx_bytes_left_i;
            `REG_TX_CFG:
                cfg_data_o <= {26'h0,cfg_tx_pending_i,cfg_tx_en_i,3'h0,r_tx_continuous};
+           `REG_WHOAMI:
+               cfg_data_o <= 32'hDEADBEEF;
            default:
                cfg_data_o <= 'h0;
          endcase
