@@ -6,7 +6,11 @@
 
 module udma_eth_frame #(
     parameter L2_AWIDTH_NOAL = 12,
-    parameter TRANS_SIZE     = 16
+    parameter TRANS_SIZE     = 16,
+
+    parameter TX_FIFO_BUFFER_DEPTH = 1024,
+    parameter RX_FIFO_BUFFER_DEPTH = 1024,
+    parameter RX_FIFO_BUFFER_DEPTH_LOG = $clog2(RX_FIFO_BUFFER_DEPTH)
 ) (
     input  logic                      sys_clk_i,
     input  logic                      clk_eth,
@@ -66,21 +70,50 @@ module udma_eth_frame #(
     input  logic                      eth_rx_axis_tuser
 );
 
+/* udma peripheral uses 16bit data words */
+assign data_tx_datasize_o = 2'b01;
+assign data_rx_datasize_o = 2'b01;
+
 /* signals between tx buffer fifo and dc fifo */
-logic           s_data_tx_valid;
-logic           s_data_tx_ready;
-logic     [7:0] s_data_tx;
-logic     [7:0] s_data_rx_o;
+logic            s_data_tx_valid;
+logic            s_data_tx_ready;
+logic     [15:0] s_data_tx;
 
-assign data_tx_datasize_o = 2'b00;
-assign data_rx_datasize_o = 2'b00;
+/* signal between tx dc fifo buffer and axis output */
+logic     [15:0] s_data_tx_out;
 
-assign data_rx_o = { 24'h0, s_data_rx_o };
+/* signal between axis rx input and rx dc fifo buffer */
+logic     [15:0] s_data_rx_in;
+
+
+/* 16 bit word from fifo must be converted to 32 bit (zero padded) */
+logic     [15:0] s_data_rx_o;
+assign data_rx_o = { 16'h0, s_data_rx_o };
+
+/* signals between rx dc fifo and generic fifo */
+logic            s_data_rx_valid;
+logic            s_data_rx_ready;
+logic     [15:0] s_data_rx;
+
+logic            s_data_rx_valid_fifo_in;
+logic            s_data_rx_ready_fifo_out;
+
+/* writes rx blocked status to register */
+logic            cfg_rx_set_blocked;
+
+/* blocked status from register ETH_FRAME_RX_CFG */
+logic            cfg_rx_blocked;
+
+/* writes rx status to register */
+logic            cfg_rx_set_eof;
+
+logic [RX_FIFO_BUFFER_DEPTH_LOG:0] cfg_rx_fifo_elements;
 
 /* register interface */
 udma_eth_frame_reg #(
     .L2_AWIDTH_NOAL(L2_AWIDTH_NOAL),
-    .TRANS_SIZE(TRANS_SIZE)
+    .TRANS_SIZE(TRANS_SIZE),
+    .RX_FIFO_BUFFER_DEPTH(RX_FIFO_BUFFER_DEPTH)
 ) u_reg_if (
     .clk_i              ( sys_clk_i           ),
     .rstn_i             ( rstn_i              ),
@@ -110,13 +143,20 @@ udma_eth_frame_reg #(
     .cfg_tx_en_i        ( cfg_tx_en_i         ),
     .cfg_tx_pending_i   ( cfg_tx_pending_i    ),
     .cfg_tx_curr_addr_i ( cfg_tx_curr_addr_i  ),
-    .cfg_tx_bytes_left_i( cfg_tx_bytes_left_i )
+    .cfg_tx_bytes_left_i( cfg_tx_bytes_left_i ),
+
+    .cfg_rx_set_blocked_i    ( cfg_rx_set_blocked   ),
+    .cfg_rx_blocked_o     ( cfg_rx_blocked    ),
+    .cfg_rx_set_eof_i (cfg_rx_set_eof),
+
+    .cfg_rx_fifo_elements (cfg_rx_fifo_elements)
+
 );
 
-
+/* tx fifos */
 io_tx_fifo #(
-    .DATA_WIDTH(8),
-    .BUFFER_DEPTH(128)
+    .DATA_WIDTH(16),
+    .BUFFER_DEPTH(TX_FIFO_BUFFER_DEPTH)
 ) u_fifo (
     .clk_i   ( sys_clk_i       ),
     .rstn_i  ( rstn_i          ),
@@ -127,41 +167,110 @@ io_tx_fifo #(
     .req_o   ( data_tx_req_o   ),
     .gnt_i   ( data_tx_gnt_i   ),
     .valid_i ( data_tx_valid_i ),
-    .data_i  ( data_tx_i[7:0]  ),
+    .data_i  ( data_tx_i[15:0]  ),
     .ready_o ( data_tx_ready_o )
 );
 
 udma_dc_fifo #(
-    .DATA_WIDTH(8),
-    .BUFFER_DEPTH(128)
+    .DATA_WIDTH(16),
+    .BUFFER_DEPTH(TX_FIFO_BUFFER_DEPTH)
 ) u_dc_fifo_tx (
-    .src_clk_i    ( sys_clk_i          ),
-    .src_rstn_i   ( rstn_i             ),
-    .src_data_i   ( s_data_tx          ),
-    .src_valid_i  ( s_data_tx_valid    ),
-    .src_ready_o  ( s_data_tx_ready    ),
-    .dst_clk_i    ( clk_eth            ),
-    .dst_rstn_i   ( rst_eth            ),
-    .dst_data_o   ( eth_tx_axis_tdata  ),
-    .dst_valid_o  ( eth_tx_axis_tvalid ),
-    .dst_ready_i  ( eth_tx_axis_tready )
+    .src_clk_i    ( sys_clk_i           ),
+    .src_rstn_i   ( rstn_i              ),
+    .src_data_i   ( s_data_tx           ),
+    .src_valid_i  ( s_data_tx_valid     ),
+    .src_ready_o  ( s_data_tx_ready     ),
+    .dst_clk_i    ( clk_eth             ),
+    .dst_rstn_i   ( rst_eth             ),
+    .dst_data_o   ( s_data_tx_out       ),
+    .dst_valid_o  ( eth_tx_axis_tvalid  ),
+    .dst_ready_i  ( eth_tx_axis_tready  )
 );
 
+/* the leftmost 8 bits are only used for "last" signaling */
+assign eth_tx_axis_tdata =  s_data_tx_out[7:0];
+assign eth_tx_axis_tlast = s_data_tx_out[8];
+
+///////////////////////////////////
+/////////////// RX ////////////////
+///////////////////////////////////
+/* rx fifo */
+/* store tlast signal at bit 8 */
+assign s_data_rx_in = {7'h0, eth_rx_axis_tlast, eth_rx_axis_tdata};
+
 udma_dc_fifo #(
-    .DATA_WIDTH(8),
-    .BUFFER_DEPTH(128)
+    .DATA_WIDTH(16),
+    .BUFFER_DEPTH(RX_FIFO_BUFFER_DEPTH)
 ) u_dc_fifo_rx (
     .src_clk_i    ( clk_eth            ),
     .src_rstn_i   ( rst_eth            ),
-    .src_data_i   ( eth_rx_axis_tdata  ),
+    .src_data_i   ( s_data_rx_in       ),
     .src_valid_i  ( eth_rx_axis_tvalid ),
     .src_ready_o  ( eth_rx_axis_tready ),
     .dst_clk_i    ( sys_clk_i          ),
     .dst_rstn_i   ( rstn_i             ),
-    .dst_data_o   ( s_data_rx_o        ),
-    .dst_valid_o  ( data_rx_valid_o    ),
-    .dst_ready_i  ( data_rx_ready_i    )
+    .dst_data_o   ( s_data_rx        ),
+    .dst_valid_o  ( s_data_rx_valid    ),
+    .dst_ready_i  ( s_data_rx_ready    )
 );
+
+assign s_data_rx_ready = s_data_rx_ready_fifo_out & ~cfg_rx_blocked;
+assign s_data_rx_valid_fifo_in = s_data_rx_valid & ~cfg_rx_blocked;
+
+/* disable rx channel if end of ethernet frame was received */
+/* set register bit "rx_blocked" in ETH_RX_CFG register */
+assign cfg_rx_set_blocked = s_data_rx_ready & s_data_rx_valid_fifo_in & s_data_rx[8];
+assign cfg_rx_set_eof = cfg_rx_set_blocked;
+
+/* tx fifos */
+io_generic_fifo #(
+    .DATA_WIDTH(16),
+    .BUFFER_DEPTH(RX_FIFO_BUFFER_DEPTH)
+) u_fifo_rx (
+    .clk_i   ( sys_clk_i       ),
+    .rstn_i  ( rstn_i          ),
+    .clr_i   ( 1'b0            ),
+
+    .elements_o (cfg_rx_fifo_elements),
+
+    .data_o  ( s_data_rx_o       ),
+    .valid_o ( data_rx_valid_o ),
+    .ready_i ( data_rx_ready_i ),
+
+    .valid_i   ( s_data_rx_valid_fifo_in   ),
+    .data_i  ( s_data_rx  ),
+    .ready_o ( s_data_rx_ready_fifo_out )
+);
+
+// logic s_data_rx_valid_block;
+// logic s_data_rx_ready_block;
+
+
+
+
+/* disable rx channel if end of ethernet frame was received */
+// always_ff @(posedge clk_i, negedge rstn_i) begin
+//     if (~rstn_i) begin
+//       s_data_rx_ready_block <= 1'b0;
+//       cfg_rx_set_blocked <= 1'b0;
+//     end else begin
+//
+//       if (s_data_rx_ready == 1'b1 && s_data_rx_valid_fifo_in == 1'b1 && s_data_rx[9] == 1'b1) begin
+//
+//           // block rx
+//           s_data_rx_ready_block <= 1'b1;
+//           s_data_rx_valid_block <= 1'b1;
+//
+//           // store blocked status to register
+//           cfg_rx_set_blocked <= 1'b1;
+//         end
+//       end else if (cfg_rx_blocked == 1'b1) begin
+//         // block rx
+//         s_data_rx_ready_block <= 1'b1;
+//         s_data_rx_valid_block <= 1'b1;
+//       end
+//     end if
+// end
 
 
 
