@@ -8,8 +8,8 @@ module udma_eth_frame #(
     parameter L2_AWIDTH_NOAL = 12,
     parameter TRANS_SIZE     = 16,
 
-    parameter TX_FIFO_BUFFER_DEPTH = 1024,
-    parameter RX_FIFO_BUFFER_DEPTH = 1024,
+    parameter TX_FIFO_BUFFER_DEPTH = 2048,
+    parameter RX_FIFO_BUFFER_DEPTH = 2048,
     parameter RX_FIFO_BUFFER_DEPTH_LOG = $clog2(RX_FIFO_BUFFER_DEPTH)
 ) (
     input  logic                      sys_clk_i,
@@ -72,7 +72,7 @@ module udma_eth_frame #(
 
 /* udma peripheral uses 16bit data words */
 assign data_tx_datasize_o = 2'b01;
-assign data_rx_datasize_o = 2'b01;
+assign data_rx_datasize_o = 2'b00;
 
 /* signals between tx buffer fifo and dc fifo */
 logic            s_data_tx_valid;
@@ -87,8 +87,8 @@ logic     [15:0] s_data_rx_in;
 
 
 /* 16 bit word from fifo must be converted to 32 bit (zero padded) */
-logic     [15:0] s_data_rx_o;
-assign data_rx_o = { 16'h0, s_data_rx_o };
+logic     [7:0] s_data_rx_o;
+assign data_rx_o = { 24'h0, s_data_rx_o };
 
 /* signals between rx dc fifo and generic fifo */
 logic            s_data_rx_valid;
@@ -224,7 +224,7 @@ assign cfg_rx_set_eof = cfg_rx_set_blocked;
 
 /* tx fifos */
 io_generic_fifo #(
-    .DATA_WIDTH(16),
+    .DATA_WIDTH(8),
     .BUFFER_DEPTH(RX_FIFO_BUFFER_DEPTH)
 ) u_fifo_rx (
     .clk_i   ( sys_clk_i       ),
@@ -238,39 +238,9 @@ io_generic_fifo #(
     .ready_i ( data_rx_ready_i ),
 
     .valid_i   ( s_data_rx_valid_fifo_in   ),
-    .data_i  ( s_data_rx  ),
+    .data_i  ( s_data_rx[7:0]  ),
     .ready_o ( s_data_rx_ready_fifo_out )
 );
-
-// logic s_data_rx_valid_block;
-// logic s_data_rx_ready_block;
-
-
-
-
-/* disable rx channel if end of ethernet frame was received */
-// always_ff @(posedge clk_i, negedge rstn_i) begin
-//     if (~rstn_i) begin
-//       s_data_rx_ready_block <= 1'b0;
-//       cfg_rx_set_blocked <= 1'b0;
-//     end else begin
-//
-//       if (s_data_rx_ready == 1'b1 && s_data_rx_valid_fifo_in == 1'b1 && s_data_rx[9] == 1'b1) begin
-//
-//           // block rx
-//           s_data_rx_ready_block <= 1'b1;
-//           s_data_rx_valid_block <= 1'b1;
-//
-//           // store blocked status to register
-//           cfg_rx_set_blocked <= 1'b1;
-//         end
-//       end else if (cfg_rx_blocked == 1'b1) begin
-//         // block rx
-//         s_data_rx_ready_block <= 1'b1;
-//         s_data_rx_valid_block <= 1'b1;
-//       end
-//     end if
-// end
 
 
 

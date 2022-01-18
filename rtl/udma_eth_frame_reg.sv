@@ -17,10 +17,11 @@
 // eth_frame specific registers
 // bit 0 (R/W)- rx fifo blocked (is set to 1 if end of frame was registered; set to 0 to enable reception of next frame)
 // bit 1 (R/W) - end of frame (is set to 1 if end of frame was registered)
-// bit 2 (R) - fifo full (is set to 1 if the RX fifo is full)
 `define REG_RX_FIFO_CFG  5'b00111 //BASEADDR+0x1C
-// holds the current number of elements in the RX fifo 
+// holds the current number of elements in the RX fifo
+// bit 0 (R) - fifo full (is set to 1 if the RX fifo is full)
 `define REG_RX_FIFO_N    5'b01000 //BASEADDR+0x20
+`define REG_RX_FIFO_FULL 5'b01001 //BASEADDR+0x24
 
 
 module udma_eth_frame_reg #(
@@ -160,8 +161,8 @@ always_ff @(posedge clk_i, negedge rstn_i) begin
               end
               `REG_RX_FIFO_CFG:
               begin
-                r_rx_blocked        <= cfg_data_i[0];
-                r_rx_eof            <= cfg_data_i[1];
+                  r_rx_blocked        <= cfg_data_i[0];
+                  r_rx_eof            <= cfg_data_i[1];
               end
             endcase
         end // if (cfg_valid_i ...)
@@ -207,13 +208,14 @@ always_comb begin
             cfg_data_o <= 32'hDEADBEEF;
         `REG_RX_FIFO_CFG:
             cfg_data_o <= {
-                29'h0,
-                cfg_rx_fifo_elements == RX_FIFO_BUFFER_DEPTH,
+                30'h0,
                 r_rx_eof,
                 r_rx_blocked
             };
         `REG_RX_FIFO_N:
             cfg_data_o[RX_FIFO_BUFFER_DEPTH_LOG:0] <= cfg_rx_fifo_elements;
+        `REG_RX_FIFO_FULL:
+            cfg_data_o <= {31'h0, cfg_rx_fifo_elements == RX_FIFO_BUFFER_DEPTH};
         default:
             cfg_data_o <= 'h0;
      endcase
