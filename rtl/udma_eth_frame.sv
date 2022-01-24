@@ -71,13 +71,15 @@ module udma_eth_frame #(
 );
 
 /* udma peripheral uses 16bit data words */
-assign data_tx_datasize_o = 2'b01;
+assign data_tx_datasize_o = 2'b00;
 assign data_rx_datasize_o = 2'b00;
 
 /* signals between tx buffer fifo and dc fifo */
 logic            s_data_tx_valid;
 logic            s_data_tx_ready;
-logic     [15:0] s_data_tx;
+logic      [7:0] s_data_tx;
+logic     [15:0] s_data_tx_dc_in;
+
 
 /* signal between tx dc fifo buffer and axis output */
 logic     [15:0] s_data_tx_out;
@@ -95,6 +97,12 @@ logic            s_data_rx_valid;
 logic            s_data_rx_ready;
 logic     [15:0] s_data_rx;
 
+/* upper 7 bits are not used */
+assign s_data_tx_dc_in[15:9] = 7'b0000000;
+/* lower 8 bit are used for actual data*/
+/* bit 8 is used for signalisation of last byte */
+assign s_data_tx_dc_in[7:0] = s_data_tx;
+
 logic            s_data_rx_valid_fifo_in;
 logic            s_data_rx_ready_fifo_out;
 
@@ -108,6 +116,13 @@ logic            cfg_rx_blocked;
 logic            cfg_rx_set_eof;
 
 logic [RX_FIFO_BUFFER_DEPTH_LOG:0] cfg_rx_fifo_elements;
+
+/* if 1 => set number of bytes to transfer on tx */
+logic   set_tx_bytes;
+/* used to reset the number of remaining tx bytes */
+logic [31:0] tx_bytes;
+/* actual tx bytes remaining */
+logic [31:0] tx_bytes_left;
 
 /* register interface */
 udma_eth_frame_reg #(
@@ -149,13 +164,16 @@ udma_eth_frame_reg #(
     .cfg_rx_blocked_o     ( cfg_rx_blocked    ),
     .cfg_rx_set_eof_i (cfg_rx_set_eof),
 
-    .cfg_rx_fifo_elements (cfg_rx_fifo_elements)
+    .cfg_rx_fifo_elements (cfg_rx_fifo_elements),
 
+    .set_tx_bytes   (set_tx_bytes),
+    .tx_bytes       (tx_bytes),
+    .tx_bytes_left  (tx_bytes_left)
 );
 
 /* tx fifos */
 io_tx_fifo #(
-    .DATA_WIDTH(16),
+    .DATA_WIDTH(8),
     .BUFFER_DEPTH(TX_FIFO_BUFFER_DEPTH)
 ) u_fifo (
     .clk_i   ( sys_clk_i       ),
@@ -167,7 +185,7 @@ io_tx_fifo #(
     .req_o   ( data_tx_req_o   ),
     .gnt_i   ( data_tx_gnt_i   ),
     .valid_i ( data_tx_valid_i ),
-    .data_i  ( data_tx_i[15:0]  ),
+    .data_i  ( data_tx_i[7:0]  ),
     .ready_o ( data_tx_ready_o )
 );
 
@@ -177,7 +195,7 @@ udma_dc_fifo #(
 ) u_dc_fifo_tx (
     .src_clk_i    ( sys_clk_i           ),
     .src_rstn_i   ( rstn_i              ),
-    .src_data_i   ( s_data_tx           ),
+    .src_data_i   ( s_data_tx_dc_in     ),
     .src_valid_i  ( s_data_tx_valid     ),
     .src_ready_o  ( s_data_tx_ready     ),
     .dst_clk_i    ( clk_eth             ),
@@ -242,6 +260,27 @@ io_generic_fifo #(
     .ready_o ( s_data_rx_ready_fifo_out )
 );
 
+/* counter for tx bytes remaining - can be reset via config register interface */
+always_ff @(posedge sys_clk_i, negedge rstn_i) begin
+    if (~rstn_i) begin
+        tx_bytes_left <= 'h0;
+    end else begin
+        if (set_tx_bytes == 1'b1) begin
+            tx_bytes_left <= tx_bytes;
+        end else if ((s_data_tx_valid & s_data_tx_ready) == 1'b1) begin
+            tx_bytes_left <= tx_bytes_left - 1;
+        end
+    end
+end
+
+/* bit 8 signals the tlast signal in the axis interface on tx channel to ethernet mac */
+always_comb begin
+    if (tx_bytes_left == 1) begin
+      s_data_tx_dc_in[8] <= 1'b1;
+    end else begin
+      s_data_tx_dc_in[8] <= 1'b0;
+    end
+end
 
 
 endmodule

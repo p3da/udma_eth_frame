@@ -23,6 +23,11 @@
 `define REG_RX_FIFO_N    5'b01000 //BASEADDR+0x20
 `define REG_RX_FIFO_FULL 5'b01001 //BASEADDR+0x24
 
+// used to set the number of bytes to be transferred to ethernet mac (unsigned 32 bit integer); (R/W)
+`define REG_TX_BYTES      5'b01010 //BASEADDR+0x28
+// number of remaining bytes to be transferred to ethernet mac (R read only)
+`define REG_TX_BYTES_LEFT 5'b01011 //BASEADDR+0x2C
+
 
 module udma_eth_frame_reg #(
     parameter L2_AWIDTH_NOAL = 12,
@@ -66,7 +71,12 @@ module udma_eth_frame_reg #(
     input  logic                      cfg_rx_set_blocked_i,
     output logic                      cfg_rx_blocked_o,
     input  logic                      cfg_rx_set_eof_i,
-    input  logic    [RX_FIFO_BUFFER_DEPTH_LOG:0]    cfg_rx_fifo_elements
+    input  logic    [RX_FIFO_BUFFER_DEPTH_LOG:0]    cfg_rx_fifo_elements,
+
+    /* handling of tx bytes to be transfered ethernet mac */
+    output logic                      set_tx_bytes,
+    output logic               [31:0] tx_bytes,
+    input  logic               [31:0] tx_bytes_left
 );
 
 logic [L2_AWIDTH_NOAL-1:0] r_rx_startaddr;
@@ -112,6 +122,12 @@ assign cfg_tx_clr_o        = r_tx_clr;
 
 assign cfg_rx_blocked_o    = r_rx_blocked;
 
+logic r_set_tx_bytes;
+logic [31:0] r_tx_bytes;
+
+assign set_tx_bytes        = r_set_tx_bytes;
+assign tx_bytes            = r_tx_bytes;
+
 always_ff @(posedge clk_i, negedge rstn_i) begin
     if (~rstn_i) begin
         r_rx_startaddr               <= 'h0;
@@ -127,14 +143,18 @@ always_ff @(posedge clk_i, negedge rstn_i) begin
 
         r_rx_blocked                 <= 'h0;
         r_cfg_rx_set_blocked_i       <= 'h0;
-        r_rx_eof           <= 'h0;
-        r_cfg_rx_set_eof_i <= 'h0;
+        r_rx_eof                     <= 'h0;
+        r_cfg_rx_set_eof_i           <= 'h0;
+
+        r_tx_bytes                   <= 'h0;
+        r_set_tx_bytes               <= 'h0;
 
     end else begin
         r_rx_en   <=  'h0;
         r_rx_clr  <=  'h0;
         r_tx_en   <=  'h0;
         r_tx_clr  <=  'h0;
+        r_set_tx_bytes = 'h0;
 
         /* write the "read configuration registers (cfg_rwn_i == 0 => write into a register )*/
         if (cfg_valid_i & ~cfg_rwn_i) begin
@@ -163,6 +183,11 @@ always_ff @(posedge clk_i, negedge rstn_i) begin
               begin
                   r_rx_blocked        <= cfg_data_i[0];
                   r_rx_eof            <= cfg_data_i[1];
+              end
+              `REG_TX_BYTES:
+              begin
+                  r_tx_bytes            = cfg_data_i;
+                  r_set_tx_bytes        = 1'b1;
               end
             endcase
         end // if (cfg_valid_i ...)
@@ -216,6 +241,10 @@ always_comb begin
             cfg_data_o[RX_FIFO_BUFFER_DEPTH_LOG:0] <= cfg_rx_fifo_elements;
         `REG_RX_FIFO_FULL:
             cfg_data_o <= {31'h0, cfg_rx_fifo_elements == RX_FIFO_BUFFER_DEPTH};
+        `REG_TX_BYTES:
+            cfg_data_o <= r_tx_bytes;
+        `REG_TX_BYTES_LEFT:
+            cfg_data_o <= tx_bytes_left;
         default:
             cfg_data_o <= 'h0;
      endcase
