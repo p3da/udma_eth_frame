@@ -171,7 +171,7 @@ udma_eth_frame_reg #(
     .tx_bytes_left  (tx_bytes_left)
 );
 
-/* tx fifos */
+/* tx fifo buffer */
 io_tx_fifo #(
     .DATA_WIDTH(8),
     .BUFFER_DEPTH(TX_FIFO_BUFFER_DEPTH)
@@ -189,6 +189,7 @@ io_tx_fifo #(
     .ready_o ( data_tx_ready_o )
 );
 
+/* tx fifo for clock domain crossing */
 udma_dc_fifo #(
     .DATA_WIDTH(16),
     .BUFFER_DEPTH(TX_FIFO_BUFFER_DEPTH)
